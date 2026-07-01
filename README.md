@@ -404,3 +404,4 @@ Some generated files still exist from the original framework scaffolding:
 
 They are generic starter docs. This root `README.md` is the project-specific guide.
 "# E2EE-CHAT-APP-WITH-VIDEO-CALLING" 
+"# E2EE-CHAT-APP-WITH-VIDEO-CALLING" 
