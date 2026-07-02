@@ -25,8 +25,10 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         // back to SockJS transports such as long polling when needed.
         registry.addEndpoint("/chat")
 
-                // Restrict browser origins that are allowed to open the websocket handshake.
-                .setAllowedOrigins("http://localhost:3000")
+                // Allow the common local frontend origins used during development.
+                // 3000 covers older React setups, 5173 is Vite's default, and 8080
+                // keeps the current proxy-based development flow working.
+                .setAllowedOrigins("http://localhost:3000", "http://localhost:5173", "http://localhost:8080")
 
                 // Enable SockJS so older browsers or blocked websocket environments
                 // can still communicate with the backend.

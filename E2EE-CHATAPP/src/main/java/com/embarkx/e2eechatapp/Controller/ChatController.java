@@ -6,10 +6,10 @@ import com.embarkx.e2eechatapp.Repository.RoomRepository;
 import com.embarkx.e2eechatapp.payload.MessageRequest;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
-import org.springframework.messaging.handler.annotation.SendTo;
+import org.springframework.messaging.handler.annotation.Payload;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.CrossOrigin;
-import org.springframework.web.bind.annotation.RequestBody;
 
 import java.time.LocalDateTime;
 
@@ -23,18 +23,19 @@ import java.time.LocalDateTime;
 @CrossOrigin("*")
 public class ChatController {
     private RoomRepository roomRepository;
+    private SimpMessagingTemplate messagingTemplate;
 
-    public ChatController(RoomRepository roomRepository) {
+    public ChatController(RoomRepository roomRepository, SimpMessagingTemplate messagingTemplate) {
         this.roomRepository = roomRepository;
+        this.messagingTemplate = messagingTemplate;
     }
 
     @MessageMapping("/sendMessage/{roomId}")
-    @SendTo("/topic/room/{roomId}")
-    public Message sendMessage(
+    public void sendMessage(
             @DestinationVariable String roomId,
-            @RequestBody MessageRequest request) {
+            @Payload MessageRequest request) {
         // Look up the room document so the new message can be added to the room history.
-        Room room = roomRepository.findByRoomId(request.getRoomId());
+        Room room = roomRepository.findByRoomId(roomId);
 
         // Build the message object that will be stored and then returned to subscribers.
         // The server sets its own timestamp so persisted messages always have a backend time.
@@ -51,8 +52,7 @@ public class ChatController {
             throw new RuntimeException("Room not found !!");
         }
 
-        // Whatever this method returns becomes the STOMP payload sent to the destination
-        // declared in @SendTo for the same room.
-        return message;
+        // Broadcast the saved message to everyone subscribed to this room.
+        messagingTemplate.convertAndSend("/topic/room/" + roomId, message);
     }
 }

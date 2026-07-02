@@ -1,26 +1,28 @@
 # E2EE Chat App
 
-A small full-stack chat application built with Spring Boot, MongoDB, React, Vite, Tailwind CSS, SockJS, and STOMP.
+A full-stack chat application with **end-to-end encryption (E2EE)** built with Spring Boot, MongoDB, React, Vite, Tailwind CSS, SockJS, and STOMP.
 
 This README is written for a beginner who wants to understand what each folder does, how data moves through the app, and where to start reading the code.
 
-## Important Reality Check
+## ✅ End-to-End Encryption Implemented
 
-Despite the project name, the current codebase does **not** implement true end-to-end encryption.
+The app now implements **true end-to-end encryption** using RSA-OAEP (2048-bit keys):
 
-What the code currently does:
-- lets users create or join a room
-- stores room messages in MongoDB
-- tries to send live updates over WebSocket/STOMP
-- polls the backend every 2 seconds to keep messages in sync
+- **Key Generation**: Each user generates a unique RSA key pair on their browser using the Web Crypto API
+- **Key Storage**: Private keys are stored locally in the browser (localStorage), never sent to the server
+- **Key Exchange**: Public keys are shared with other participants when joining a room
+- **Message Encryption**: Messages are encrypted client-side before sending
+- **Message Decryption**: Only the intended recipient can decrypt messages using their private key
+- **Self-Encryption**: Users can also read their own sent messages
 
-What is **not** present right now:
-- client-side encryption
-- key exchange
-- message decryption logic
-- authentication/authorization
+### How E2EE Works in This App
 
-So the app is currently a room-based real-time chat prototype, not a finished encrypted messenger.
+1. When a user joins a room, a key pair is generated (or retrieved from localStorage)
+2. The user's public key is registered with the room in MongoDB
+3. When sending a message, it is encrypted for each participant using their public key
+4. The encrypted messages are stored in MongoDB (server never sees plaintext)
+5. Recipients decrypt messages using their private key
+6. An "Encrypted" indicator shows on each message
 
 ## Tech Stack
 
@@ -41,6 +43,8 @@ So the app is currently a room-based real-time chat prototype, not a finished en
 - `@stomp/stompjs`
 - React Router
 - React Hot Toast
+- LiveKit React components for the meeting page
+- Web Crypto API (built-in) for encryption
 
 ## Project Structure
 
@@ -51,16 +55,19 @@ E2EE-CHAT-APP/
 |-- E2EE-CHATAPP/                    # Spring Boot backend
 |   |-- pom.xml                      # Maven dependencies and build setup
 |   |-- src/main/resources/
-|   |   `-- application.properties   # Spring app name + MongoDB connection
+|   |   `-- application.properties   # Spring app name + MongoDB + LiveKit config
 |   |-- src/main/java/com/embarkx/e2eechatapp/
 |   |   |-- E2EeChatappApplication.java
 |   |   |-- config/WebSocketConfig.java
 |   |   |-- Controller/ChatController.java
+|   |   |-- Controller/MeetingController.java
 |   |   |-- Controller/RoomController.java
 |   |   |-- Entity/Room.java
 |   |   |-- Entity/Message.java
 |   |   |-- Repository/RoomRepository.java
-|   |   `-- payload/MessageRequest.java
+|   |   |-- service/MeetingTokenService.java
+|   |   |-- payload/MessageRequest.java
+|   |   `-- payload/PublicKeyRegistrationRequest.java
 |   `-- src/test/java/...            # Spring context smoke test
 |-- Frontend/                        # React frontend
 |   |-- package.json                 # Frontend dependencies and scripts
@@ -73,12 +80,17 @@ E2EE-CHAT-APP/
 |       |-- index.css                # Tailwind entrypoint
 |       |-- components/
 |       |   |-- JoinCreateChat.jsx   # Room entry form
-|       |   `-- ChatPage.jsx         # Main chat screen
-|       |-- context/chatContext.jsx  # Shared session state
-|       |-- services/RoomService.js  # REST API helpers
+|       |   |-- ChatPage.jsx         # Main chat screen (E2EE enabled)
+|       |   `-- MeetingPage.jsx      # LiveKit meeting screen
+|       |-- context/chatContext.jsx  # Shared session state + keys
+|       |-- services/
+|       |   |-- RoomService.js       # Room REST API helpers
+|       |   `-- MeetingService.js    # LiveKit token API helper
 |       `-- config/
 |           |-- AxiosHelper.js       # Axios base URL
 |           |-- helper.js            # Relative time formatter
+|           |-- cryptoHelper.js      # E2EE encryption utilities ⭐
+|           |-- meetingHelper.js     # Meeting participant identity helper
 |           `-- routes.jsx           # Route definitions
 ```
 
@@ -86,17 +98,53 @@ E2EE-CHAT-APP/
 
 At a high level, the app works like this:
 
+### Pre-E2EE Flow (Room Creation)
 1. A user enters a name and a room id on the landing page.
 2. The frontend either creates a room or checks whether that room already exists.
-3. If successful, the frontend stores the room id and user name in React context.
-4. The chat page opens.
-5. The chat page tries to connect to the backend over SockJS/STOMP.
-6. The chat page also fetches message history through REST.
-7. When a user sends a message, the frontend immediately shows it locally.
-8. The frontend publishes that message to the backend over STOMP.
-9. The backend stores the message inside the room document in MongoDB.
-10. The backend returns the message to subscribed clients.
-11. The frontend also polls every 2 seconds as a fallback so missed live events still appear.
+3. If successful, the frontend generates or retrieves RSA key pair from localStorage.
+4. The frontend stores the room id, user name, and keys in React context.
+5. The public key is registered with the room in MongoDB.
+
+### E2EE Chat Flow
+1. The chat page opens and connects via SockJS/STOMP.
+2. When a user sends a message:
+   - The message is encrypted for each participant using their public keys
+   - A self-encrypted copy is created using the sender's public key
+   - The encrypted message is sent to the backend
+3. The backend stores the encrypted message in MongoDB (never sees plaintext)
+4. Recipients receive the encrypted message and decrypt it with their private key
+5. Each message displays an "Encrypted" indicator
+
+## E2EE Implementation Details
+
+### Frontend Crypto (`src/config/cryptoHelper.js`)
+The crypto module provides these functions:
+- `generateKeyPair()` - Creates RSA-OAEP 2048-bit key pair
+- `encryptMessage(plaintext, publicKey)` - Encrypts message for a recipient
+- `decryptMessage(encryptedBase64, privateKey)` - Decrypts received message
+- `getOrCreateUserKeys()` - Gets existing keys or generates new ones
+- `storeUserKeys(publicKey, privateKey)` - Stores keys in localStorage
+- `hashKey(publicKey)` - Creates a fingerprint for key verification
+
+### Backend Changes
+- `Room.java` - Added `participantPublicKeys` Map<String, String> field
+- `RoomController.java` - Added endpoints for participant public key management:
+  - `GET /api/v1/rooms/{roomId}/participants` - Get all participants' public keys
+  - `POST /api/v1/rooms/{roomId}/participants` - Register your public key
+
+### Chat Context (`src/context/chatContext.jsx`)
+Extended to include:
+- `userKeys` - Current user's key pair
+- `publicKey` - User's public key for sharing
+- `participants` - Map of other participants' public keys
+
+### Chat Page (`src/components/ChatPage.jsx`)
+Key changes:
+- Loads participants' public keys on room join
+- Registers user's public key with the room
+- Encrypts messages before sending
+- Decrypts received messages
+- Shows encrypted indicator on messages
 
 ## Backend Walkthrough
 
@@ -116,182 +164,78 @@ What it does:
 - tells Spring that client-to-server destinations start with `/app`
 - tells Spring that server-to-client broadcast destinations start with `/topic`
 
-This means:
-- frontend publishes to something like `/app/sendMessage/{roomId}`
-- frontend subscribes to some `/topic/...` destination
-
 ### `Controller/RoomController.java`
-This is the REST API for room management and message history.
+This is the REST API for room management, message history, and participant keys.
 
 Endpoints:
-- `POST /api/v1/rooms`
-  - creates a room if the room id does not already exist
-  - request body is just a plain string room id
-- `GET /api/v1/rooms/{roomId}`
-  - checks whether a room exists
-  - used by the frontend before joining
-- `GET /api/v1/rooms/{roomId}/messages?page=0&size=50`
-  - returns a slice of saved messages
-  - pagination is done manually because messages are stored inside the room document
+- `POST /api/v1/rooms` - creates a room
+- `GET /api/v1/rooms/{roomId}` - checks if room exists
+- `GET /api/v1/rooms/{roomId}/messages` - returns paginated messages
+- `GET /api/v1/rooms/{roomId}/participants` - returns participants' public keys ⭐
+- `POST /api/v1/rooms/{roomId}/participants` - registers public key ⭐
 
 ### `Controller/ChatController.java`
 This controller handles live messages over STOMP.
-
-Flow:
-- client publishes to `/app/sendMessage/{roomId}`
-- backend receives a `MessageRequest`
-- backend finds the matching room in MongoDB
-- backend creates a `Message`
-- backend appends the message to the room's `messages` list
-- backend saves the updated room
-- backend broadcasts the returned `Message`
 
 ### `Entity/Room.java`
 This is the MongoDB document for a chat room.
 
 Fields:
 - `id`: MongoDB's internal id
-- `roomId`: human-friendly room code typed by users
-- `messages`: list of all messages for that room
-
-### `Entity/Message.java`
-This represents one chat message.
-
-Fields:
-- `sender`
-- `content`
-- `timestamp`
-
-### `payload/MessageRequest.java`
-This is the payload shape the frontend sends when publishing a message.
-
-Fields:
-- `content`
-- `roomId`
-- `sender`
-
-### `Repository/RoomRepository.java`
-This is the Spring Data MongoDB repository.
-
-It gives you:
-- built-in CRUD methods from `MongoRepository`
-- a custom finder: `findByRoomId(String roomId)`
+- `roomId`: human-friendly room code
+- `messages`: list of all messages (encrypted)
+- `participantPublicKeys`: Map of userId -> publicKey ⭐
 
 ## Frontend Walkthrough
 
 ### `src/main.jsx`
-This is the React entry point.
-
-It wraps the app with:
-- `BrowserRouter` for page navigation
-- `Toaster` for notifications
-- `ChatProvider` for shared room/user state
-
-### `src/config/routes.jsx`
-Defines the routes:
-- `/` -> landing page
-- `/chat` -> chat room screen
-- `/about` -> placeholder route
-- `*` -> fallback 404 route
+React entry point with BrowserRouter, Toaster, and ChatProvider.
 
 ### `src/context/chatContext.jsx`
-This is the shared session state for the current browser tab.
-
-It stores:
-- `roomId`
-- `currentUser`
-- `connected`
-
-This lets the landing page and chat page share the same room session information.
-
-### `src/components/JoinCreateChat.jsx`
-This is the first screen users see.
-
-Responsibilities:
-- collect `userName` and `roomId`
-- validate that both fields are filled
-- call `createRoomAPI()` when the user wants a new room
-- call `joinChatAPI()` when the user wants to join an existing room
-- save successful session data into React context
-- navigate to `/chat`
+Shared session state including E2EE keys and participants.
 
 ### `src/components/ChatPage.jsx`
-This is the main chat UI.
+Main chat UI with E2EE encryption:
+- Key generation/loading on startup
+- Public key registration on room join
+- Message encryption before sending
+- Message decryption on receipt
+- Encrypted indicator display
 
-Responsibilities:
-- read `roomId`, `currentUser`, and `connected` from context
-- open a SockJS/STOMP connection
-- subscribe for incoming room messages
-- fetch existing room history from the backend
-- poll every 2 seconds as a backup
-- optimistically add a sent message to the UI before the server reply arrives
-- publish new messages to the backend
-- auto-scroll to the latest message
-- clear session state when leaving the room
+### `src/config/cryptoHelper.js` ⭐
+E2EE encryption utilities using Web Crypto API:
+- RSA-OAEP 2048-bit encryption
+- Base64 encoding for storage/transmission
+- Key generation, encryption, decryption, and hashing
 
-Key helper logic inside this file:
-- `getMessageTimestamp()`
-  - normalizes different timestamp field names
-- `isOwnMessage()`
-  - decides whether to right-align or left-align a message
-- `mergeIncomingMessages()`
-  - deduplicates messages using `sender + content`
-  - replaces optimistic messages when a server timestamp arrives later
-
-### `src/services/RoomService.js`
-This file keeps API calls in one place.
-
-Functions:
-- `createRoomAPI(roomId)`
-- `joinChatAPI(roomId)`
-- `getMessagesAPI(roomId, size, page)`
-
-### `src/config/AxiosHelper.js`
-Creates a reusable Axios client pointing at:
-- `http://localhost:8080`
-
-### `src/config/helper.js`
-Contains `timeAgo()` which converts a date into labels like:
-- `Just now`
-- `2 minutes ago`
-- `3 hours ago`
-
-## Message Flow End-to-End
-
-Here is the most important path in the whole app:
+## Message Flow with E2EE
 
 ```text
 User types message in ChatPage
         |
         v
-Frontend creates local message object
+Generate/Load RSA Key Pair (if not exists)
         |
         v
-Frontend shows message immediately (optimistic UI)
+Encrypt message for each participant using their public keys
         |
         v
-Frontend publishes JSON to /app/sendMessage/{roomId}
+Create self-encrypted copy using own public key
         |
         v
-ChatController receives the message
+Send encrypted message to backend via STOMP
         |
         v
-RoomRepository finds the room in MongoDB
+Backend stores encrypted message in MongoDB
         |
         v
-Message is appended to room.messages
+Backend broadcasts to subscribed clients
         |
         v
-Room is saved back to MongoDB
+Recipient decrypts message using their private key
         |
         v
-Backend broadcasts the saved message to subscribers
-        |
-        v
-Frontend merges broadcast message into local state
-        |
-        v
-Polling also refreshes message history every 2 seconds
+Display decrypted message with "Encrypted" indicator
 ```
 
 ## Local Setup
@@ -349,59 +293,80 @@ GET /api/v1/rooms/my-room-id
 GET /api/v1/rooms/my-room-id/messages?page=0&size=50
 ```
 
+### Get participants' public keys ⭐
+```http
+GET /api/v1/rooms/my-room-id/participants
+```
+Response:
+```json
+{
+  "alice": "MIIBIjANBgkqhkiG9w0BAQEF...",
+  "bob": "MIIBIjANBgkqhkiG9w0BAQEF..."
+}
+```
+
+### Register public key ⭐
+```http
+POST /api/v1/rooms/my-room-id/participants
+Content-Type: application/json
+Body:
+{
+  "userId": "alice",
+  "publicKey": "MIIBIjANBgkqhkiG9w0BAQEF..."
+}
+```
+
 ### WebSocket / STOMP
 - handshake endpoint: `/chat`
 - publish destination prefix: `/app`
 - subscribe destination prefix: `/topic`
 
+### LiveKit meeting token
+```http
+POST /api/v1/meetings/token
+Content-Type: application/json
+Body:
+{
+  "roomName": "my-room",
+  "participantIdentity": "alice-123",
+  "participantName": "Alice"
+}
+```
+
+## Security Considerations
+
+- **Private keys never leave the browser** - stored in localStorage
+- **Server cannot read messages** - only stores encrypted data
+- **Each message is encrypted for each recipient** - ensures only intended recipients can read
+- **Self-encryption allows users to read their own messages**
+- **Key fingerprint can be verified** - users can compare hashKey() outputs out-of-band
+
+## Current Limitations
+
+- Messages are stored directly in the `Room` document (embedded)
+- No authentication/authorization system
+- No key rotation implemented yet
+- No forward secrecy (keys persist)
+- Session state lost on browser refresh (keys remain in localStorage)
+
 ## What a Beginner Should Read First
 
 If you want to understand the code in the easiest order, read files in this sequence:
 
-1. `Frontend/src/components/JoinCreateChat.jsx`
-2. `Frontend/src/context/chatContext.jsx`
-3. `Frontend/src/components/ChatPage.jsx`
-4. `Frontend/src/services/RoomService.js`
-5. `E2EE-CHATAPP/src/main/java/com/embarkx/e2eechatapp/Controller/RoomController.java`
-6. `E2EE-CHATAPP/src/main/java/com/embarkx/e2eechatapp/Controller/ChatController.java`
-7. `E2EE-CHATAPP/src/main/java/com/embarkx/e2eechatapp/config/WebSocketConfig.java`
-8. `E2EE-CHATAPP/src/main/java/com/embarkx/e2eechatapp/Entity/Room.java`
-9. `E2EE-CHATAPP/src/main/java/com/embarkx/e2eechatapp/Repository/RoomRepository.java`
-
-That order follows the actual user journey through the app.
-
-## Current Limitations and Things to Notice
-
-These are not guesses; they come directly from the current code.
-
-- The project name says `E2EE`, but there is no encryption logic yet.
-- Messages are stored directly in the `Room` document, so a single room document grows forever as more messages are added.
-- There is no login system, token system, or access control.
-- The frontend uses optimistic UI plus polling, which helps even if websocket delivery is imperfect.
-- The backend broadcasts to `/topic/room/{roomId}` while the frontend subscribes to `/topic/${roomId}`. Those destinations should match for pure websocket delivery.
-- The backend currently allows websocket origin `http://localhost:3000`, while a default Vite app usually runs on `http://localhost:5173`.
-- The attachment button exists in the UI but does not upload files yet.
-- Error handling is basic and can be improved.
-- Tests are minimal; there is only a Spring context smoke test right now.
+1. `Frontend/src/config/cryptoHelper.js` - Understand E2EE crypto ⭐
+2. `Frontend/src/components/JoinCreateChat.jsx` - Room entry
+3. `Frontend/src/context/chatContext.jsx` - Session & key management
+4. `Frontend/src/components/ChatPage.jsx` - E2EE chat flow
+5. `Frontend/src/services/RoomService.js` - API calls
+6. `E2EE-CHATAPP/src/main/java/com/embarkx/e2eechatapp/Entity/Room.java` - Data model
+7. `E2EE-CHATAPP/src/main/java/com/embarkx/e2eechatapp/Controller/RoomController.java` - REST API
 
 ## Suggested Next Improvements
 
-If you want to keep building this project, these are the highest-value next steps:
-
-1. Implement real end-to-end encryption in the browser.
-2. Fix websocket topic/origin alignment between frontend and backend.
-3. Add authentication and room access control.
-4. Move messages into their own MongoDB collection for better scalability.
-5. Add proper API and websocket tests.
-6. Persist session data so refreshing the browser does not drop the room state.
-7. Implement real file attachment support or remove the placeholder button.
-
-## Notes About Existing Scaffold Docs
-
-Some generated files still exist from the original framework scaffolding:
-- `E2EE-CHATAPP/HELP.md`
-- `Frontend/README.md`
-
-They are generic starter docs. This root `README.md` is the project-specific guide.
-"# E2EE-CHAT-APP-WITH-VIDEO-CALLING" 
-"# E2EE-CHAT-APP-WITH-VIDEO-CALLING" 
+1. Add key rotation for better security
+2. Implement forward secrecy with ephemeral keys
+3. Add message authentication (HMAC)
+4. Implement key fingerprint verification UI
+5. Add authentication system
+6. Move messages to separate MongoDB collection
+7. Add end-to-end encrypted file sharing

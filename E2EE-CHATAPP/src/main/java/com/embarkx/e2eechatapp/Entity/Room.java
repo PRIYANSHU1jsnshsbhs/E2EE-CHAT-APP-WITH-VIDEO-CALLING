@@ -8,7 +8,9 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * MongoDB document representing one chat room.
@@ -17,6 +19,7 @@ import java.util.List;
  * - its database id
  * - the human-facing room id entered by users
  * - the full message history as an embedded list
+ * - participant public keys for key exchange
  */
 @Document(collection = "rooms")
 @Getter
@@ -29,9 +32,12 @@ public class Room {
     @Id
     private String id;
 
-    // The room code users type into the frontend to create or join a chat room.
+    // The room code users type in the frontend to create or join a chat room.
     private String roomId;
 
     // Messages are embedded directly inside the room document for simple history lookup.
     private List<Message> messages = new ArrayList<>();
+
+    // Participant public keys: participantId -> publicKey
+    private Map<String, String> participantPublicKeys = new HashMap<>();
 }

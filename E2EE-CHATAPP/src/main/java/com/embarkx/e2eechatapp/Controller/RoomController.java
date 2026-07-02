@@ -3,14 +3,13 @@ package com.embarkx.e2eechatapp.Controller;
 import com.embarkx.e2eechatapp.Entity.Message;
 import com.embarkx.e2eechatapp.Entity.Room;
 import com.embarkx.e2eechatapp.Repository.RoomRepository;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
+import com.embarkx.e2eechatapp.payload.PublicKeyRegistrationRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.awt.print.Pageable;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Exposes the HTTP endpoints used for room management and chat history lookup.
@@ -19,6 +18,7 @@ import java.util.List;
  * - create a room
  * - confirm that a room exists before joining
  * - fetch previously saved messages
+ * - manage participant public keys
  */
 @RestController
 @RequestMapping("/api/v1/rooms")
@@ -73,11 +73,33 @@ public class RoomController {
         int end = Math.min(messages.size(), start + size);
 
         List<Message> paginatedMessages = messages.subList(start, end);
-        // The commented code below shows an earlier idea to use Spring Data paging, but
-        // the current implementation slices the in-memory list directly.
-//        Pageable pageable = PageRequest.of(page, size);
-//        Page<Message> data = roomRepository.findAll();
         return ResponseEntity.ok(paginatedMessages);
+    }
+
+    // Get all participants and their public keys for a room
+    @GetMapping("/{roomId}/participants")
+    public ResponseEntity<Map<String, String>> getParticipants(@PathVariable String roomId) {
+        Room room = roomRepository.findByRoomId(roomId);
+        if (room == null) {
+            return ResponseEntity.badRequest().build();
+        }
+        return ResponseEntity.ok(room.getParticipantPublicKeys());
+    }
+
+    // Register participant's public key in a room
+    @PostMapping("/{roomId}/participants")
+    public ResponseEntity<?> registerPublicKey(@PathVariable String roomId, @RequestBody PublicKeyRegistrationRequest request) {
+        Room room = roomRepository.findByRoomId(roomId);
+        
+        if (room == null) {
+            return ResponseEntity.badRequest().body("Room not found!");
+        }
+
+        // Add or update participant's public key
+        room.getParticipantPublicKeys().put(request.getUserId(), request.getPublicKey());
+        roomRepository.save(room);
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(room.getParticipantPublicKeys());
     }
 
 }
