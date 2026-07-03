@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: e2ee-chatapp-backend
+    runtime: java
+    buildCommand: ./mvnw package -DskipTests
+    startCommand: java -jar target/E2EE-CHATAPP-0.0.1-SNAPSHOT.jar
+    envVars:
+      - key: MONGODB_URI
+        sync: false
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
