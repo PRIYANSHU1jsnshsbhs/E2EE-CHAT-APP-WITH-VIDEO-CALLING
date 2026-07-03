@@ -1,372 +1,971 @@
-# E2EE Chat App
+# ENIGMATIC — End-to-End Encrypted Chat App
 
-A full-stack chat application with **end-to-end encryption (E2EE)** built with Spring Boot, MongoDB, React, Vite, Tailwind CSS, SockJS, and STOMP.
+A full-stack, real-time chat application with **true end-to-end encryption (E2EE)** and **video meeting** support.
+The server never sees your plaintext — every message is encrypted in the browser before it leaves your device.
 
-This README is written for a beginner who wants to understand what each folder does, how data moves through the app, and where to start reading the code.
+---
 
-## ✅ End-to-End Encryption Implemented
+## Table of Contents
 
-The app now implements **true end-to-end encryption** using RSA-OAEP (2048-bit keys):
+1. [What This App Does](#1-what-this-app-does)
+2. [Tech Stack](#2-tech-stack)
+3. [Architecture Overview](#3-architecture-overview)
+4. [How E2EE Works — Step by Step](#4-how-e2ee-works--step-by-step)
+5. [Project Structure](#5-project-structure)
+6. [Backend Deep Dive](#6-backend-deep-dive)
+7. [Frontend Deep Dive](#7-frontend-deep-dive)
+8. [Data Models](#8-data-models)
+9. [API Reference](#9-api-reference)
+10. [WebSocket / STOMP Reference](#10-websocket--stomp-reference)
+11. [Prerequisites](#11-prerequisites)
+12. [Running the App Locally](#12-running-the-app-locally)
+13. [Configuration Reference](#13-configuration-reference)
+14. [LiveKit Setup](#14-livekit-setup)
+15. [Troubleshooting](#15-troubleshooting)
+16. [Security Model and Threat Analysis](#16-security-model-and-threat-analysis)
+17. [Known Limitations](#17-known-limitations)
 
-- **Key Generation**: Each user generates a unique RSA key pair on their browser using the Web Crypto API
-- **Key Storage**: Private keys are stored locally in the browser (localStorage), never sent to the server
-- **Key Exchange**: Public keys are shared with other participants when joining a room
-- **Message Encryption**: Messages are encrypted client-side before sending
-- **Message Decryption**: Only the intended recipient can decrypt messages using their private key
-- **Self-Encryption**: Users can also read their own sent messages
+---
 
-### How E2EE Works in This App
+## 1. What This App Does
 
-1. When a user joins a room, a key pair is generated (or retrieved from localStorage)
-2. The user's public key is registered with the room in MongoDB
-3. When sending a message, it is encrypted for each participant using their public key
-4. The encrypted messages are stored in MongoDB (server never sees plaintext)
-5. Recipients decrypt messages using their private key
-6. An "Encrypted" indicator shows on each message
+ENIGMATIC is a browser-based encrypted chat platform where:
 
-## Tech Stack
+- Users create or join **named rooms** using a short room code
+- All chat messages are **RSA-OAEP encrypted per recipient** before leaving the browser
+- The Spring Boot backend stores and relays **only ciphertext** — it has zero ability to read messages
+- Users can launch a **video/audio meeting** from inside any chat room using LiveKit WebRTC
+- The UI follows a **terminal/hacker aesthetic** — black background, neon green monospace text
+
+---
+
+## 2. Tech Stack
 
 ### Backend
-- Java 21
-- Spring Boot 4.1
-- Spring Web MVC
-- Spring WebSocket + STOMP
-- Spring Data MongoDB
-- Lombok
+| Technology | Version | Purpose |
+|---|---|---|
+| Java | 21 | Runtime language |
+| Spring Boot | 4.1 | Application framework, embedded Tomcat |
+| Spring Web MVC | included | REST API controllers |
+| Spring WebSocket + STOMP | included | Real-time bi-directional messaging |
+| Spring Data MongoDB | included | Repository layer for MongoDB |
+| Lombok | latest | Eliminates getter/setter boilerplate |
+| Maven Wrapper | included | Reproducible builds, no global Maven needed |
 
 ### Frontend
-- React 19
-- Vite
-- Tailwind CSS 4
-- Axios
-- SockJS
-- `@stomp/stompjs`
-- React Router
-- React Hot Toast
-- LiveKit React components for the meeting page
-- Web Crypto API (built-in) for encryption
+| Technology | Version | Purpose |
+|---|---|---|
+| React | 19 | Component UI framework |
+| Vite | 8 | Dev server, HMR, production bundler |
+| Tailwind CSS | 4 | Utility-first styling |
+| Axios | latest | HTTP REST client |
+| SockJS-client | latest | WebSocket with HTTP long-poll fallback |
+| @stomp/stompjs | 7 | STOMP protocol over SockJS |
+| React Router | 7 | Client-side page routing |
+| LiveKit React | latest | Pre-built video/audio meeting UI |
+| Web Crypto API | browser built-in | RSA-OAEP 2048-bit encrypt/decrypt |
+| react-hot-toast | latest | Toast notifications |
+| Framer Motion | latest | UI animations |
 
-## Project Structure
+### Infrastructure
+| Technology | Purpose |
+|---|---|
+| MongoDB | Persists rooms and embedded message history |
+| LiveKit Cloud | Managed WebRTC SFU for video/audio routing |
 
-```text
-E2EE-CHAT-APP/
-|-- README.md                        # Main beginner-friendly documentation
-|-- .github/modernize/...            # Tooling/hooks, not app runtime code
-|-- E2EE-CHATAPP/                    # Spring Boot backend
-|   |-- pom.xml                      # Maven dependencies and build setup
-|   |-- src/main/resources/
-|   |   `-- application.properties   # Spring app name + MongoDB + LiveKit config
-|   |-- src/main/java/com/embarkx/e2eechatapp/
-|   |   |-- E2EeChatappApplication.java
-|   |   |-- config/WebSocketConfig.java
-|   |   |-- Controller/ChatController.java
-|   |   |-- Controller/MeetingController.java
-|   |   |-- Controller/RoomController.java
-|   |   |-- Entity/Room.java
-|   |   |-- Entity/Message.java
-|   |   |-- Repository/RoomRepository.java
-|   |   |-- service/MeetingTokenService.java
-|   |   |-- payload/MessageRequest.java
-|   |   `-- payload/PublicKeyRegistrationRequest.java
-|   `-- src/test/java/...            # Spring context smoke test
-|-- Frontend/                        # React frontend
-|   |-- package.json                 # Frontend dependencies and scripts
-|   |-- vite.config.js               # Dev server + websocket proxy config
-|   |-- index.html                   # Browser entry HTML
-|   `-- src/
-|       |-- main.jsx                 # React bootstrap
-|       |-- App.jsx                  # Home page wrapper
-|       |-- App.css                  # Reserved app-level CSS
-|       |-- index.css                # Tailwind entrypoint
-|       |-- components/
-|       |   |-- JoinCreateChat.jsx   # Room entry form
-|       |   |-- ChatPage.jsx         # Main chat screen (E2EE enabled)
-|       |   `-- MeetingPage.jsx      # LiveKit meeting screen
-|       |-- context/chatContext.jsx  # Shared session state + keys
-|       |-- services/
-|       |   |-- RoomService.js       # Room REST API helpers
-|       |   `-- MeetingService.js    # LiveKit token API helper
-|       `-- config/
-|           |-- AxiosHelper.js       # Axios base URL
-|           |-- helper.js            # Relative time formatter
-|           |-- cryptoHelper.js      # E2EE encryption utilities ⭐
-|           |-- meetingHelper.js     # Meeting participant identity helper
-|           `-- routes.jsx           # Route definitions
+---
+
+## 3. Architecture Overview
+
+```
+Browser (React + Vite)
+        |
+        |  HTTP REST  (Axios)         --> /api/v1/rooms/**
+        |  HTTP REST  (Axios)         --> /api/v1/meetings/token
+        |  WebSocket  (SockJS/STOMP)  --> /chat
+        |
+        v
+Spring Boot (port 8080)
+        |
+        |-- RoomController     REST: create/join rooms, get messages, manage public keys
+        |-- ChatController     STOMP: receive encrypted messages, broadcast to subscribers
+        |-- MeetingController  REST: generate LiveKit JWT token
+        |-- MeetingTokenService  Builds and signs LiveKit JWT with HMAC-SHA256
+        |
+        v
+MongoDB (port 27017)
+  database: E2EECHATAPP
+  collection: rooms
+    {
+      _id, roomId,
+      messages: [ { sender, encryptedMessages, selfEncrypted, senderPublicKey, timestamp } ],
+      participantPublicKeys: { "username": "base64-spki-public-key", ... }
+    }
+
+LiveKit Cloud (WSS)
+  -- Browser connects directly to LiveKit after receiving JWT from backend
+  -- Backend only mints the token; it does not proxy audio/video
 ```
 
-## How the App Works
+### Request lifecycle — sending a chat message
 
-At a high level, the app works like this:
+```
+1. User types message and hits Send
+2. ChatPage.jsx fetches latest participant public keys from backend (GET /api/v1/rooms/{id}/participants)
+3. For each participant, encryptMessage(plaintext, participantPublicKey) runs in the browser
+4. A selfEncrypted copy is also created for the sender using their own public key
+5. STOMP publish to /app/sendEncryptedMessage/{roomId}
+6. ChatController.sendEncryptedMessage() receives the payload
+7. Builds a Message entity (no plaintext field populated) and saves to MongoDB
+8. messagingTemplate.convertAndSend("/topic/encrypted/room/{roomId}", message)
+9. All subscribers (including sender) receive the broadcast
+10. Each client calls decryptMessage() using their own private key stored in localStorage
+11. Decrypted content renders in the chat window with a lock icon
+```
 
-### Pre-E2EE Flow (Room Creation)
-1. A user enters a name and a room id on the landing page.
-2. The frontend either creates a room or checks whether that room already exists.
-3. If successful, the frontend generates or retrieves RSA key pair from localStorage.
-4. The frontend stores the room id, user name, and keys in React context.
-5. The public key is registered with the room in MongoDB.
+---
 
-### E2EE Chat Flow
-1. The chat page opens and connects via SockJS/STOMP.
-2. When a user sends a message:
-   - The message is encrypted for each participant using their public keys
-   - A self-encrypted copy is created using the sender's public key
-   - The encrypted message is sent to the backend
-3. The backend stores the encrypted message in MongoDB (never sees plaintext)
-4. Recipients receive the encrypted message and decrypt it with their private key
-5. Each message displays an "Encrypted" indicator
+## 4. How E2EE Works — Step by Step
 
-## E2EE Implementation Details
+### Key Generation
+- When a user opens the app, `getOrCreateUserKeys()` in `cryptoHelper.js` checks localStorage
+- If no keys exist, `generateKeyPair()` creates an **RSA-OAEP 2048-bit** key pair using `window.crypto.subtle`
+- The public key is exported as **SPKI** format and base64-encoded
+- The private key is exported as **PKCS8** format and base64-encoded
+- Both are stored in localStorage under the key `userCryptoKeys`
+- **The private key never leaves the browser. Ever.**
 
-### Frontend Crypto (`src/config/cryptoHelper.js`)
-The crypto module provides these functions:
-- `generateKeyPair()` - Creates RSA-OAEP 2048-bit key pair
-- `encryptMessage(plaintext, publicKey)` - Encrypts message for a recipient
-- `decryptMessage(encryptedBase64, privateKey)` - Decrypts received message
-- `getOrCreateUserKeys()` - Gets existing keys or generates new ones
-- `storeUserKeys(publicKey, privateKey)` - Stores keys in localStorage
-- `hashKey(publicKey)` - Creates a fingerprint for key verification
+### Key Registration
+- After joining a room, ChatPage calls `registerPublicKeyInRoom(roomId, publicKey, username)`
+- This POSTs to `POST /api/v1/rooms/{roomId}/participants`
+- MongoDB stores `{ username: base64PublicKey }` in the room's `participantPublicKeys` map
+- Other participants can now look up this user's public key
 
-### Backend Changes
-- `Room.java` - Added `participantPublicKeys` Map<String, String> field
-- `RoomController.java` - Added endpoints for participant public key management:
-  - `GET /api/v1/rooms/{roomId}/participants` - Get all participants' public keys
-  - `POST /api/v1/rooms/{roomId}/participants` - Register your public key
+### Sending a Message
+```
+plaintext = "Hello Bob"
 
-### Chat Context (`src/context/chatContext.jsx`)
-Extended to include:
-- `userKeys` - Current user's key pair
-- `publicKey` - User's public key for sharing
-- `participants` - Map of other participants' public keys
+For each participant in room (e.g. bob, carol):
+    ciphertext[bob]   = RSA-OAEP-Encrypt(plaintext, bob_public_key)
+    ciphertext[carol] = RSA-OAEP-Encrypt(plaintext, carol_public_key)
 
-### Chat Page (`src/components/ChatPage.jsx`)
-Key changes:
-- Loads participants' public keys on room join
-- Registers user's public key with the room
-- Encrypts messages before sending
-- Decrypts received messages
-- Shows encrypted indicator on messages
+selfEncrypted = RSA-OAEP-Encrypt(plaintext, alice_public_key)  // alice is sender
 
-## Backend Walkthrough
+Payload sent to backend:
+{
+  sender: "alice",
+  senderPublicKey: "MIIBIjAN...",
+  encryptedMessages: { bob: "abc...", carol: "xyz..." },
+  selfEncrypted: "def...",
+  roomId: "my-room"
+}
+```
+
+### Receiving a Message
+```
+On STOMP broadcast received:
+
+if message.sender == currentUser:
+    plaintext = RSA-OAEP-Decrypt(message.selfEncrypted, myPrivateKey)
+else:
+    plaintext = RSA-OAEP-Decrypt(message.encryptedMessages[myUsername], myPrivateKey)
+
+Display plaintext with lock icon.
+```
+
+### What if Decryption Fails?
+- This happens when loading old messages encrypted with a different key pair
+  (e.g. user cleared localStorage and got new keys)
+- The app does NOT crash or throw — it shows a placeholder:
+  - `[encrypted — sent in a previous session]` for your own old messages
+  - `[encrypted — key mismatch]` for messages you should be able to read
+  - `[encrypted — not addressed to you]` for messages sent before you joined
+
+---
+
+## 5. Project Structure
+
+```
+E2EE-CHAT-APP/
+├── README.md
+├── E2EE-CHATAPP/                          # Spring Boot backend
+│   ├── pom.xml                            # Maven dependencies
+│   ├── mvnw / mvnw.cmd                    # Maven wrapper scripts
+│   └── src/main/
+│       ├── resources/
+│       │   └── application.properties     # App config (MongoDB URI, LiveKit keys)
+│       └── java/com/embarkx/e2eechatapp/
+│           ├── E2EeChatappApplication.java       # Main entry point
+│           ├── config/
+│           │   └── WebSocketConfig.java          # STOMP endpoint + broker config
+│           ├── Controller/
+│           │   ├── RoomController.java            # REST: rooms, messages, public keys
+│           │   ├── ChatController.java            # STOMP: encrypted message handler
+│           │   └── MeetingController.java         # REST: LiveKit token endpoint
+│           ├── Entity/
+│           │   ├── Room.java                      # MongoDB document model
+│           │   └── Message.java                   # Embedded message value object
+│           ├── Repository/
+│           │   └── RoomRepository.java            # Spring Data MongoDB repository
+│           ├── service/
+│           │   └── MeetingTokenService.java       # JWT builder for LiveKit
+│           ├── payload/
+│           │   ├── MessageRequest.java            # Plaintext message DTO (legacy)
+│           │   ├── EncryptedMessageRequest.java   # E2EE message DTO
+│           │   ├── PublicKeyRegistrationRequest.java
+│           │   ├── MeetingTokenRequest.java
+│           │   └── MeetingTokenResponse.java
+│           └── exception/
+│               ├── MeetingException.java
+│               └── MeetingExceptionHandler.java
+│
+└── Frontend/                              # React frontend
+    ├── package.json
+    ├── vite.config.js                     # Dev proxy config
+    ├── index.html                         # Browser entry HTML
+    └── src/
+        ├── main.jsx                       # React bootstrap (BrowserRouter, providers)
+        ├── App.jsx                        # Home page wrapper
+        ├── index.css                      # Tailwind + CSS variables
+        ├── config/
+        │   ├── AxiosHelper.js             # Axios instance with base URL
+        │   ├── cryptoHelper.js            # ALL crypto: keygen, encrypt, decrypt
+        │   ├── helper.js                  # timeAgo() utility
+        │   ├── meetingHelper.js           # Meeting token request builder
+        │   └── routes.jsx                 # React Router route definitions
+        ├── context/
+        │   └── chatContext.jsx            # Global session state + user key pair
+        ├── services/
+        │   ├── RoomService.js             # REST calls: rooms, messages, participants
+        │   └── MeetingService.js          # REST call: meeting token
+        └── components/
+            ├── JoinCreateChat.jsx         # Landing page — create/join room
+            ├── ChatPage.jsx               # Main chat UI with E2EE
+            ├── MeetingPage.jsx            # LiveKit video meeting UI
+            └── ui/
+                ├── particles.tsx          # Interactive particle canvas background
+                └── globe.tsx              # Rotating 3D globe (cobe)
+```
+
+---
+
+## 6. Backend Deep Dive
 
 ### `E2EeChatappApplication.java`
-This is the backend entry point. Running this class starts Spring Boot and loads:
-- REST controllers
-- WebSocket configuration
-- MongoDB repositories
-- the embedded web server
+The Spring Boot entry point. Running `main()` starts the embedded Tomcat server,
+bootstraps the application context, and wires all beans automatically.
+
+---
 
 ### `config/WebSocketConfig.java`
-This file configures live messaging.
+Configures all WebSocket/STOMP infrastructure.
 
-What it does:
-- creates a websocket handshake endpoint at `/chat`
-- enables SockJS fallback support
-- tells Spring that client-to-server destinations start with `/app`
-- tells Spring that server-to-client broadcast destinations start with `/topic`
+```java
+registry.addEndpoint("/chat")
+    .setAllowedOrigins("http://localhost:3000", "http://localhost:5173", "http://localhost:8080")
+    .withSockJS();
+```
+- Browsers connect to `/chat` for the STOMP handshake
+- SockJS provides fallback transports (XHR streaming, long-polling) for environments where raw WebSockets are blocked
+
+```java
+config.enableSimpleBroker("/topic");
+config.setApplicationDestinationPrefixes("/app");
+```
+- Messages from client → server must be published to destinations starting with `/app`
+- Messages from server → client are broadcast on `/topic/**` destinations
+
+---
 
 ### `Controller/RoomController.java`
-This is the REST API for room management, message history, and participant keys.
+Handles all room lifecycle and key management over REST.
 
-Endpoints:
-- `POST /api/v1/rooms` - creates a room
-- `GET /api/v1/rooms/{roomId}` - checks if room exists
-- `GET /api/v1/rooms/{roomId}/messages` - returns paginated messages
-- `GET /api/v1/rooms/{roomId}/participants` - returns participants' public keys ⭐
-- `POST /api/v1/rooms/{roomId}/participants` - registers public key ⭐
+| Method | Path | Description |
+|---|---|---|
+| POST | /api/v1/rooms | Create a new room |
+| GET | /api/v1/rooms/{roomId} | Get room (confirm it exists before joining) |
+| GET | /api/v1/rooms/{roomId}/messages | Paginated message history |
+| GET | /api/v1/rooms/{roomId}/participants | Get all participant public keys |
+| POST | /api/v1/rooms/{roomId}/participants | Register your public key |
+
+Pagination for messages is done in-memory because messages are embedded inside the Room document.
+The math: `start = messages.size() - (page+1)*size`, `end = start + size`.
+
+---
 
 ### `Controller/ChatController.java`
-This controller handles live messages over STOMP.
+Handles real-time STOMP messages.
+
+**`@MessageMapping("/sendEncryptedMessage/{roomId}")`**
+- Receives `EncryptedMessageRequest` (sender, senderPublicKey, encryptedMessages map, selfEncrypted, roomId)
+- Builds a `Message` entity — note: `content` field is left null (no plaintext ever stored)
+- Saves to MongoDB inside the room's messages list
+- Broadcasts to `/topic/encrypted/room/{roomId}`
+
+---
+
+### `Controller/MeetingController.java`
+Single endpoint: `POST /api/v1/meetings/token`
+Delegates to `MeetingTokenService` to mint a LiveKit JWT and returns `{ server_url, participant_token }`.
+
+---
+
+### `service/MeetingTokenService.java`
+Builds a LiveKit-compatible JWT entirely from scratch using `javax.crypto.Mac` (HMAC-SHA256).
+No LiveKit server SDK is used — the JWT is hand-crafted:
+```
+header  = base64url({ "alg": "HS256", "typ": "JWT" })
+payload = base64url({ iss, sub, nbf, exp, name, video: { roomJoin: true, room } })
+signature = HMAC-SHA256(header + "." + payload, livekit_api_secret)
+token = header + "." + payload + "." + signature
+```
+Tokens are valid for **10 minutes**. The service validates that the requested room exists in MongoDB before issuing a token.
+
+---
 
 ### `Entity/Room.java`
-This is the MongoDB document for a chat room.
+MongoDB document (`@Document(collection = "rooms")`).
 
-Fields:
-- `id`: MongoDB's internal id
-- `roomId`: human-friendly room code
-- `messages`: list of all messages (encrypted)
-- `participantPublicKeys`: Map of userId -> publicKey ⭐
+| Field | Type | Description |
+|---|---|---|
+| id | String | MongoDB ObjectId (internal) |
+| roomId | String | Human-facing room code |
+| messages | List<Message> | All messages embedded in the document |
+| participantPublicKeys | Map<String,String> | username -> base64 SPKI public key |
 
-## Frontend Walkthrough
+---
+
+### `Entity/Message.java`
+Value object embedded inside Room.
+
+| Field | Type | Description |
+|---|---|---|
+| sender | String | Display name of the sender |
+| content | String | Plaintext — only used for legacy non-E2EE messages |
+| timestamp | LocalDateTime | Set by the server at receive time |
+| encryptedMessages | Map<String,String> | recipientUsername -> base64 RSA ciphertext |
+| selfEncrypted | String | Sender's own encrypted copy (base64) |
+| senderPublicKey | String | Sender's public key — lets recipients verify sender identity |
+
+---
+
+## 7. Frontend Deep Dive
 
 ### `src/main.jsx`
-React entry point with BrowserRouter, Toaster, and ChatProvider.
+Bootstraps React with three wrapping providers:
+- `BrowserRouter` — enables React Router navigation
+- `Toaster` — global toast notification layer
+- `ChatProvider` — provides shared session state (room, user, keys) to all components
+
+---
 
 ### `src/context/chatContext.jsx`
-Shared session state including E2EE keys and participants.
+The global state store. Holds:
+
+| State | Type | Description |
+|---|---|---|
+| roomId | string | The active room code |
+| currentUser | string | The user's chosen display name |
+| connected | boolean | Whether the user has successfully joined a room |
+| userKeys | object | `{ publicKey, privateKey }` — the RSA key pair |
+| publicKey | string | Base64 SPKI public key (shared with others) |
+| participants | object | `{ username: publicKey }` map of room members |
+| liveKitUrl | string | LiveKit server WSS URL for the current meeting |
+| participantToken | string | LiveKit JWT for the current meeting |
+
+On mount, `useEffect` calls `getOrCreateUserKeys()` to hydrate the key pair from localStorage.
+
+---
+
+### `src/config/cryptoHelper.js`
+All cryptographic operations live here. Uses only the browser's native `window.crypto.subtle`.
+
+| Function | Description |
+|---|---|
+| `generateKeyPair()` | Generates RSA-OAEP 2048-bit key pair, returns `{ publicKey, privateKey }` as base64 strings |
+| `encryptMessage(plaintext, publicKeyBase64)` | Imports public key, encrypts with RSA-OAEP SHA-256, returns base64 ciphertext |
+| `decryptMessage(encryptedBase64, privateKeyBase64)` | Imports private key, decrypts, returns plaintext string |
+| `getOrCreateUserKeys()` | Checks localStorage, generates new keys if none exist |
+| `storeUserKeys(pub, priv)` | Saves keys to localStorage as JSON |
+| `getUserPublicKey()` | Returns just the public key from localStorage |
+| `clearUserKeys()` | Wipes key pair from localStorage |
+| `hashKey(publicKeyBase64)` | SHA-256 fingerprint of a public key (hex) — for out-of-band verification |
+| `bufferToBase64(buffer)` | Converts ArrayBuffer to base64 string |
+| `base64ToBuffer(base64)` | Converts base64 string to ArrayBuffer |
+
+---
+
+### `src/components/JoinCreateChat.jsx`
+The landing page (`/`).
+- Input fields for Username and Room ID
+- **Join Room**: calls `GET /api/v1/rooms/{roomId}` — fails if room doesn't exist
+- **Create Room**: calls `POST /api/v1/rooms` with the room ID as plain-text body — fails if room already exists
+- On success, sets `roomId`, `currentUser`, `connected` in context and navigates to `/chat`
+
+---
 
 ### `src/components/ChatPage.jsx`
-Main chat UI with E2EE encryption:
-- Key generation/loading on startup
-- Public key registration on room join
-- Message encryption before sending
-- Message decryption on receipt
-- Encrypted indicator display
+The main chat screen (`/chat`). On mount:
 
-### `src/config/cryptoHelper.js` ⭐
-E2EE encryption utilities using Web Crypto API:
-- RSA-OAEP 2048-bit encryption
-- Base64 encoding for storage/transmission
-- Key generation, encryption, decryption, and hashing
+1. Redirects to `/` if not connected
+2. `GET /api/v1/rooms/{roomId}/participants` — loads existing participant public keys
+3. `POST /api/v1/rooms/{roomId}/participants` — registers own public key
+4. `GET /api/v1/rooms/{roomId}/messages` — loads message history, decrypts each one
+5. Opens STOMP connection via SockJS, subscribes to `/topic/encrypted/room/{roomId}`
 
-## Message Flow with E2EE
+On Send:
+1. Fetches latest participants (to pick up anyone who joined after initial load)
+2. Encrypts message for each participant individually
+3. Encrypts a self-copy
+4. Publishes to `/app/sendEncryptedMessage/{roomId}`
 
-```text
-User types message in ChatPage
-        |
-        v
-Generate/Load RSA Key Pair (if not exists)
-        |
-        v
-Encrypt message for each participant using their public keys
-        |
-        v
-Create self-encrypted copy using own public key
-        |
-        v
-Send encrypted message to backend via STOMP
-        |
-        v
-Backend stores encrypted message in MongoDB
-        |
-        v
-Backend broadcasts to subscribed clients
-        |
-        v
-Recipient decrypts message using their private key
-        |
-        v
-Display decrypted message with "Encrypted" indicator
+On STOMP message received:
+- Calls `decryptMessageForCurrentUser()` which reads the private key from localStorage
+- Appends decrypted message to the messages list
+- If decryption fails (key mismatch), shows a readable placeholder instead of crashing
+
+---
+
+### `src/components/MeetingPage.jsx`
+The video meeting screen (`/meeting`). On mount:
+1. Redirects to `/` if not connected
+2. Calls `POST /api/v1/meetings/token` with room name, participant identity, participant name
+3. Receives `{ server_url, participant_token }`
+4. Renders LiveKit `<PreJoin>` for camera/mic device selection
+5. On pre-join submit, renders `<LiveKitRoom>` + `<VideoConference>` with credentials
+6. Shows a `MeetingStatusBanner` overlay when reconnecting
+
+---
+
+### `vite.config.js`
+Proxies two path prefixes during development so the browser sees everything on one origin:
+
+```js
+"/chat" -> "http://localhost:8080"  (ws: true — proxies WebSocket upgrades too)
+"/api"  -> "http://localhost:8080"
 ```
 
-## Local Setup
+This means you never have to worry about CORS during local development.
+In production you would configure a reverse proxy (nginx, AWS ALB, etc.) to do the same.
 
-## Prerequisites
-- Java 21
-- Node.js and npm
-- MongoDB running locally on port `27017`
+---
 
-### 1. Start MongoDB
-Make sure MongoDB is running locally.
+## 8. Data Models
 
-The backend expects:
-- host: `localhost`
-- port: `27017`
-- database: `E2EECHATAPP`
-
-### 2. Start the backend
-From `E2EE-CHATAPP`:
-
-```powershell
-.\mvnw.cmd spring-boot:run
+### Room document (MongoDB)
+```json
+{
+  "_id": "68a1f0c2b3d4e5f6a7b8c9d0",
+  "roomId": "my-secret-room",
+  "messages": [
+    {
+      "sender": "alice",
+      "content": null,
+      "timestamp": "2025-07-04T14:30:00",
+      "encryptedMessages": {
+        "bob": "MIIB...base64-ciphertext-for-bob...",
+        "carol": "MIIB...base64-ciphertext-for-carol..."
+      },
+      "selfEncrypted": "MIIB...base64-ciphertext-for-alice-self...",
+      "senderPublicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ..."
+    }
+  ],
+  "participantPublicKeys": {
+    "alice": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ...",
+    "bob":   "MIIBIjANBgkqhkiG9w0BAQEFAAOCAg...",
+    "carol": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAh..."
+  }
+}
 ```
 
-Backend default URL:
-- `http://localhost:8080`
+### localStorage schema (browser)
+```json
+{
+  "publicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ...",
+  "privateKey": "MIIEvQIBADANBgkqhkiG9w0BAQEFAA...",
+  "createdAt": "2025-07-04T12:00:00.000Z"
+}
+```
+Key name: `userCryptoKeys`
 
-### 3. Start the frontend
-From `Frontend`:
+---
 
-```powershell
+## 9. API Reference
+
+### Create a room
+```http
+POST /api/v1/rooms
+Content-Type: application/plain
+
+my-room-id
+```
+Response `201 Created`:
+```json
+{ "_id": "...", "roomId": "my-room-id", "messages": [], "participantPublicKeys": {} }
+```
+Response `400 Bad Request` if room already exists: `"Room already exists"`
+
+---
+
+### Get / join a room
+```http
+GET /api/v1/rooms/my-room-id
+```
+Response `200 OK`: full Room document
+Response `400 Bad Request`: `"Room not found!"`
+
+---
+
+### Get message history (paginated)
+```http
+GET /api/v1/rooms/my-room-id/messages?page=0&size=50
+```
+- `page` defaults to `0` (most recent window)
+- `size` defaults to `20`
+- Pages walk backward from the end of the embedded list
+
+Response `200 OK`: array of Message objects
+
+---
+
+### Get participant public keys
+```http
+GET /api/v1/rooms/my-room-id/participants
+```
+Response `200 OK`:
+```json
+{
+  "alice": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ...",
+  "bob":   "MIIBIjANBgkqhkiG9w0BAQEFAAOCAg..."
+}
+```
+
+---
+
+### Register your public key
+```http
+POST /api/v1/rooms/my-room-id/participants
+Content-Type: application/json
+
+{
+  "userId": "alice",
+  "publicKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ..."
+}
+```
+Response `201 Created`: full `participantPublicKeys` map
+
+---
+
+### Generate a LiveKit meeting token
+```http
+POST /api/v1/meetings/token
+Content-Type: application/json
+
+{
+  "roomName": "my-room-id",
+  "participantIdentity": "alice-1720094400000",
+  "participantName": "alice"
+}
+```
+Response `201 Created`:
+```json
+{
+  "server_url": "wss://your-project.livekit.cloud",
+  "participant_token": "eyJhbGci..."
+}
+```
+Response `400 Bad Request` if room does not exist: `{ "error": "Room not found." }`
+
+---
+
+## 10. WebSocket / STOMP Reference
+
+### Connection
+```
+URL:       http://localhost:5173/chat   (Vite proxies to http://localhost:8080/chat)
+Transport: SockJS with WebSocket preferred, long-poll fallback
+```
+
+### Client → Server (publish)
+
+| Destination | Payload type | Description |
+|---|---|---|
+| `/app/sendEncryptedMessage/{roomId}` | `EncryptedMessageRequest` JSON | Send an E2EE message |
+| `/app/sendMessage/{roomId}` | `MessageRequest` JSON | Legacy plaintext message (not used by current UI) |
+
+**EncryptedMessageRequest shape:**
+```json
+{
+  "sender": "alice",
+  "senderPublicKey": "MIIBIjAN...",
+  "encryptedMessages": {
+    "bob": "base64-ciphertext",
+    "carol": "base64-ciphertext"
+  },
+  "selfEncrypted": "base64-ciphertext",
+  "roomId": "my-room-id"
+}
+```
+
+### Server → Client (subscribe)
+
+| Destination | Payload type | Description |
+|---|---|---|
+| `/topic/encrypted/room/{roomId}` | `Message` JSON | Broadcast of saved encrypted message |
+| `/topic/room/{roomId}` | `Message` JSON | Legacy plaintext broadcast |
+
+**Message broadcast shape:**
+```json
+{
+  "sender": "alice",
+  "content": null,
+  "timestamp": "2025-07-04T14:30:00",
+  "encryptedMessages": { "bob": "..." },
+  "selfEncrypted": "...",
+  "senderPublicKey": "MIIBIjAN..."
+}
+```
+
+---
+
+## 11. Prerequisites
+
+Before running anything, make sure these are installed:
+
+### Java 21
+```
+java -version
+# Must show: openjdk 21 or similar
+```
+Download: https://adoptium.net/temurin/releases/?version=21
+
+### Node.js 18+ and npm
+```
+node -v   # v18.x or higher
+npm -v    # 9.x or higher
+```
+Download: https://nodejs.org/en/download
+
+### MongoDB 6+ (Community Edition)
+```
+mongod --version
+# mongod v6.x or v7.x
+```
+Download: https://www.mongodb.com/try/download/community
+MongoDB must be running on `localhost:27017` with no authentication for default config.
+
+### A LiveKit account (for video meetings only)
+Free tier available at https://livekit.io — see [Section 14](#14-livekit-setup).
+Chat works without LiveKit. Meeting page will show an error if keys are not configured.
+
+---
+
+## 12. Running the App Locally
+
+### Step 1 — Start MongoDB
+
+**Windows (if installed as a service):**
+```cmd
+net start MongoDB
+```
+
+**Windows (manual):**
+```cmd
+mongod --dbpath C:\data\db
+```
+
+**macOS / Linux:**
+```bash
+brew services start mongodb-community
+# or
+sudo systemctl start mongod
+```
+
+Verify it is running:
+```
+mongosh
+# You should see the MongoDB shell prompt
+```
+The app will auto-create the `E2EECHATAPP` database and `rooms` collection on first use.
+
+---
+
+### Step 2 — Start the Spring Boot Backend
+
+Open a terminal in the `E2EE-CHATAPP` directory:
+
+**Windows:**
+```cmd
+cd E2EE-CHATAPP
+mvnw.cmd spring-boot:run
+```
+
+**macOS / Linux:**
+```bash
+cd E2EE-CHATAPP
+./mvnw spring-boot:run
+```
+
+Expected output (last few lines):
+```
+Tomcat started on port 8080 (http) with context path '/'
+Started E2EeChatappApplication in 3.4 seconds
+```
+
+If you see a MongoDB connection error, make sure MongoDB is running on port 27017.
+The backend listens on `http://localhost:8080`.
+
+---
+
+### Step 3 — Start the React Frontend
+
+Open a **second terminal** in the `Frontend` directory:
+
+```cmd
+cd Frontend
 npm install
 npm run dev
 ```
 
-Frontend default Vite URL is usually:
-- `http://localhost:5173`
+Expected output:
+```
+VITE v8.x.x  ready in 300ms
 
-## API Reference
-
-### Create room
-```http
-POST /api/v1/rooms
-Content-Type: application/plain
-Body: my-room-id
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
 ```
 
-### Join room / fetch room
-```http
-GET /api/v1/rooms/my-room-id
+Open `http://localhost:5173` in your browser.
+
+---
+
+### Step 4 — Using the App
+
+1. Enter a **username** and a **room code** on the landing page
+2. Click **Create Room** to create a new room, or **Join Room** to join an existing one
+3. You will be taken to the chat screen
+4. Open the same URL in another browser window/tab, use a different username, join the same room
+5. Send messages — they will appear in both windows, decrypted automatically
+6. Click **Join Meeting** to launch the video room (requires LiveKit config — see Section 14)
+
+---
+
+### Running both in one terminal (optional, Windows)
+
+You can use two CMD windows side by side, or a terminal multiplexer. There is no combined start script.
+
+---
+
+### Building for production
+
+**Frontend:**
+```cmd
+cd Frontend
+npm run build
+```
+Output goes to `Frontend/dist/`. Serve it with any static file server or behind an nginx reverse proxy.
+
+**Backend:**
+```cmd
+cd E2EE-CHATAPP
+mvnw.cmd package -DskipTests
+java -jar target/E2EE-CHATAPP-0.0.1-SNAPSHOT.jar
 ```
 
-### Fetch messages
-```http
-GET /api/v1/rooms/my-room-id/messages?page=0&size=50
+---
+
+## 13. Configuration Reference
+
+All backend configuration is in `E2EE-CHATAPP/src/main/resources/application.properties`.
+
+| Property | Default | Description |
+|---|---|---|
+| `spring.application.name` | `E2EE-CHATAPP` | Application name shown in logs |
+| `spring.data.mongodb.uri` | `mongodb://localhost:27017/E2EECHATAPP` | MongoDB connection string |
+| `livekit.url` | `wss://...livekit.cloud` | LiveKit server WebSocket URL |
+| `livekit.api-key` | `APItb7GD...` | LiveKit API key (from dashboard) |
+| `livekit.api-secret` | `ff9Zx...` | LiveKit API secret (from dashboard) |
+
+### Changing the MongoDB URI
+If MongoDB requires authentication or runs on a different host:
+```properties
+spring.data.mongodb.uri=mongodb://username:password@host:27017/E2EECHATAPP
 ```
 
-### Get participants' public keys ⭐
-```http
-GET /api/v1/rooms/my-room-id/participants
+### Changing the backend port
+Add to `application.properties`:
+```properties
+server.port=9090
 ```
-Response:
-```json
-{
-  "alice": "MIIBIjANBgkqhkiG9w0BAQEF...",
-  "bob": "MIIBIjANBgkqhkiG9w0BAQEF..."
-}
+Then update `vite.config.js` proxy targets from `8080` to `9090`.
+
+### Environment variables (recommended for production)
+Instead of hardcoding secrets, use environment variables:
+```properties
+livekit.api-key=${LIVEKIT_API_KEY}
+livekit.api-secret=${LIVEKIT_API_SECRET}
 ```
+Then set `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` in your environment before starting the backend.
 
-### Register public key ⭐
-```http
-POST /api/v1/rooms/my-room-id/participants
-Content-Type: application/json
-Body:
-{
-  "userId": "alice",
-  "publicKey": "MIIBIjANBgkqhkiG9w0BAQEF..."
-}
-```
+---
 
-### WebSocket / STOMP
-- handshake endpoint: `/chat`
-- publish destination prefix: `/app`
-- subscribe destination prefix: `/topic`
+## 14. LiveKit Setup
 
-### LiveKit meeting token
-```http
-POST /api/v1/meetings/token
-Content-Type: application/json
-Body:
-{
-  "roomName": "my-room",
-  "participantIdentity": "alice-123",
-  "participantName": "Alice"
-}
+LiveKit powers the video meeting feature. Chat works without it.
+
+### Create a free account
+1. Go to https://livekit.io and sign up
+2. Create a new project in the dashboard
+3. Copy your **API Key** and **API Secret** from the project settings
+4. Copy the **Server URL** (format: `wss://your-project.livekit.cloud`)
+
+### Update application.properties
+```properties
+livekit.url=wss://your-project-name.livekit.cloud
+livekit.api-key=APIxxxxxxxxxxxxx
+livekit.api-secret=your-secret-here
 ```
 
-## Security Considerations
+### How it works
+1. User clicks "Join Meeting" in the chat
+2. Frontend calls `POST /api/v1/meetings/token`
+3. Backend validates the room exists, then mints a signed JWT with:
+   - `roomJoin: true` permission
+   - Room name scoped to the chat room
+   - 10-minute expiry
+4. Frontend receives `{ server_url, participant_token }`
+5. LiveKit `<PreJoin>` lets the user configure camera/mic
+6. `<LiveKitRoom>` connects directly to LiveKit's cloud using the token
+7. Audio and video streams are routed through LiveKit — the Spring Boot backend is not involved
 
-- **Private keys never leave the browser** - stored in localStorage
-- **Server cannot read messages** - only stores encrypted data
-- **Each message is encrypted for each recipient** - ensures only intended recipients can read
-- **Self-encryption allows users to read their own messages**
-- **Key fingerprint can be verified** - users can compare hashKey() outputs out-of-band
+### Camera / Microphone permissions
+The browser will ask for camera and microphone access when joining a meeting.
+If you deny them, the pre-join screen will show an error. You can still join with audio-only or video-only.
 
-## Current Limitations
+---
 
-- Messages are stored directly in the `Room` document (embedded)
-- No authentication/authorization system
-- No key rotation implemented yet
-- No forward secrecy (keys persist)
-- Session state lost on browser refresh (keys remain in localStorage)
+## 15. Troubleshooting
 
-## What a Beginner Should Read First
+### Backend won't start — MongoDB connection refused
+```
+com.mongodb.MongoSocketOpenException: Exception opening socket
+```
+MongoDB is not running. Start it first (see Step 1 in Section 12).
 
-If you want to understand the code in the easiest order, read files in this sequence:
+---
 
-1. `Frontend/src/config/cryptoHelper.js` - Understand E2EE crypto ⭐
-2. `Frontend/src/components/JoinCreateChat.jsx` - Room entry
-3. `Frontend/src/context/chatContext.jsx` - Session & key management
-4. `Frontend/src/components/ChatPage.jsx` - E2EE chat flow
-5. `Frontend/src/services/RoomService.js` - API calls
-6. `E2EE-CHATAPP/src/main/java/com/embarkx/e2eechatapp/Entity/Room.java` - Data model
-7. `E2EE-CHATAPP/src/main/java/com/embarkx/e2eechatapp/Controller/RoomController.java` - REST API
+### Backend won't start — port 8080 in use
+```
+Web server failed to start. Port 8080 was already in use.
+```
+Either kill the process using port 8080, or change the port:
+```properties
+# application.properties
+server.port=8081
+```
+Then update `vite.config.js` proxy target to `http://localhost:8081`.
 
-## Suggested Next Improvements
+---
 
-1. Add key rotation for better security
-2. Implement forward secrecy with ephemeral keys
-3. Add message authentication (HMAC)
-4. Implement key fingerprint verification UI
-5. Add authentication system
-6. Move messages to separate MongoDB collection
-7. Add end-to-end encrypted file sharing
+### `npm run dev` fails — module not found
+You skipped `npm install`. Run it first:
+```cmd
+cd Frontend
+npm install
+npm run dev
+```
+
+---
+
+### Chat messages show "[encrypted — sent in a previous session]"
+Your localStorage keys changed. This is expected if you:
+- Cleared your browser data
+- Opened DevTools and ran `localStorage.clear()`
+- Switched browsers
+
+Old messages were encrypted with your old public key. They cannot be recovered.
+New messages you send will work fine with your new key pair.
+
+---
+
+### Chat messages show "[encrypted — not addressed to you]"
+You joined the room after those messages were sent. The sender encrypted only for participants
+who were registered at send time. You were not in `participantPublicKeys` yet.
+
+---
+
+### Chat messages show "[encrypted — key mismatch]"
+A message was encrypted for your username but your private key doesn't match.
+This can happen if two tabs/devices are logged in with the same username but different key pairs.
+Use a unique username per device.
+
+---
+
+### WebSocket connection fails — STOMP error in console
+Make sure:
+1. The backend is running on port 8080
+2. You are accessing the frontend via `http://localhost:5173` (not `127.0.0.1`)
+3. Vite proxy is active (only works with `npm run dev`, not a static file server)
+
+---
+
+### Meeting page shows "Could not prepare the meeting"
+1. Check that the LiveKit keys in `application.properties` are correct
+2. Check that the room you are in actually exists in MongoDB
+3. The meeting token expires after 10 minutes — navigate back to chat and re-click "Join Meeting"
+
+---
+
+### Camera/microphone error in pre-join
+```
+Camera or microphone permission was denied
+```
+Allow camera/mic access in your browser's address bar permission prompt.
+On Chrome: click the camera icon in the address bar → Allow.
+
+---
+
+### Build fails — Java version mismatch
+```
+error: Source option 21 is not supported
+```
+Your `JAVA_HOME` points to an older JDK. Set it to Java 21:
+```cmd
+set JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-21.x.x
+```
+
+---
+
+## 16. Security Model and Threat Analysis
+
+### What is protected
+- **Message content** — encrypted with RSA-OAEP 2048-bit before leaving the browser
+- **Private keys** — never transmitted; stored only in localStorage on the sender's device
+- **Server-side confidentiality** — the MongoDB database contains only ciphertext; a database breach reveals no message content
+
+### What is NOT protected
+- **Metadata** — the server knows who sent a message, when, to which room, and who the recipients are
+- **Username authenticity** — anyone can claim any username; there is no authentication system
+- **Key authenticity** — public keys are registered by whoever claims that username; a MITM can register a fake key before the real user joins
+- **Forward secrecy** — keys are persistent; compromise of a user's localStorage exposes all past messages
+- **Transport** — the STOMP connection is not TLS-encrypted in local development; use HTTPS/WSS in production
+
+### Recommended hardening for production
+- Add user authentication (JWT auth, OAuth2, etc.) to prevent username spoofing
+- Serve the app over HTTPS/WSS to protect metadata in transit
+- Implement key fingerprint verification UI so users can confirm each other's keys out-of-band
+- Consider replacing RSA-OAEP with a Signal-Protocol-style ratchet for forward secrecy
+- Move messages to a separate MongoDB collection to enable efficient cleanup and TTL indexing
+- Rotate LiveKit credentials and store them in environment variables, not in the properties file
+
+---
+
+## 17. Known Limitations
+
+- Messages are stored as an embedded array inside the Room document. Very active rooms will produce large documents and slow MongoDB reads. For production, move messages to a separate collection with an index on `roomId`.
+- No authentication — anyone who knows a room code can join and read all future messages.
+- No key rotation — if a user's localStorage is cleared, they cannot recover old messages and must re-register their new public key.
+- No forward secrecy — all messages can be decrypted if a user's private key is ever compromised.
+- Session state is memory-only — refreshing the chat page disconnects the STOMP client and the user must rejoin.
+- RSA-OAEP has a plaintext size limit based on key size (2048-bit key = max ~214 bytes plaintext). Long messages will fail silently. Hybrid encryption (RSA + AES) should be used for production.
+- The `EncryptedMessageService.js` file in `src/services/` is dead code — the ChatPage handles encryption directly. It can be removed.
