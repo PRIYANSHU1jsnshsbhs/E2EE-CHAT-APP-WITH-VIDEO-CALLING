@@ -1,0 +1,1 @@
+web: java -jar target/E2EE-CHATAPP-0.0.1-SNAPSHOT.jar
