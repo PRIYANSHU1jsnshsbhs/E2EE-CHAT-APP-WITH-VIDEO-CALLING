@@ -1,4 +1,5 @@
 FROM eclipse-temurin:21-jdk-alpine AS build
+# cache-bust: 1
 WORKDIR /app
 COPY . .
 RUN chmod +x mvnw && ./mvnw package -DskipTests
